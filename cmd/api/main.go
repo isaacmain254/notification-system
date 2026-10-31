@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/isaacmain254/notification-system/internal/config"
+	"github.com/isaacmain254/notification-system/internal/database"
 	apphttp "github.com/isaacmain254/notification-system/internal/http"
 )
 
@@ -24,6 +25,14 @@ func main() {
 		logger.Error("load configuration", "error", err)
 		os.Exit(1)
 	}
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pool, err := database.OpenPool(startupCtx, &cfg.Database)
+	startupCancel()
+	if err != nil {
+		logger.Error("connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Service.Port,

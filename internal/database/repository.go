@@ -143,6 +143,36 @@ func (r *Repository) SetEventStatus(ctx context.Context, id pgtype.UUID, status 
 	return r.queries.SetEventStatus(ctx, sqlc.SetEventStatusParams{ID: id, Status: status})
 }
 
+// BeginEventProcessing atomically moves a pending event into processing. A
+// duplicate delivery for an event that is already processing or processed is
+// treated as successfully handled without changing its state.
+func (r *Repository) BeginEventProcessing(ctx context.Context, eventID string) (bool, error) {
+	var id pgtype.UUID
+	if err := id.Scan(eventID); err != nil {
+		return false, fmt.Errorf("parse event ID: %w", err)
+	}
+	var transitioned bool
+	err := r.pool.QueryRow(ctx, `
+		UPDATE events SET status = 'processing'
+		WHERE id = $1 AND status = 'pending'
+		RETURNING true
+	`, id).Scan(&transitioned)
+	if err == nil {
+		return transitioned, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return false, fmt.Errorf("transition event to processing: %w", err)
+	}
+	var status string
+	if err := r.pool.QueryRow(ctx, `SELECT status FROM events WHERE id = $1`, id).Scan(&status); err != nil {
+		return false, fmt.Errorf("read event processing status: %w", err)
+	}
+	if status == "processing" || status == "processed" {
+		return false, nil
+	}
+	return false, fmt.Errorf("event %s is in unexpected status %q", eventID, status)
+}
+
 func (r *Repository) CreateTemplate(ctx context.Context, arg sqlc.CreateTemplateParams) (sqlc.Template, error) {
 	return r.queries.CreateTemplate(ctx, arg)
 }

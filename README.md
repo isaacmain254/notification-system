@@ -6,14 +6,14 @@ Copy `.env.example` to `.env` and adjust the development credentials if needed. 
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up -d postgres
+docker compose up -d postgres rabbitmq
 go run ./cmd/migrate
 go run ./cmd/api
 ```
 
-The database listens on the configured `DB_PORT` (default `5432`). The API listens on `SERVICE_PORT` (default `5000`) and verifies the database connection at startup.
+The database listens on the configured `DB_PORT` (default `5432`), RabbitMQ on `RABBITMQ_PORT` (default `5672`), and its management UI on port `15672`. The API listens on `SERVICE_PORT` (default `5000`) and verifies the database connection at startup. Start `go run ./cmd/worker` in a second terminal to publish outbox messages and consume events. The worker retries RabbitMQ connections while the broker is unavailable.
 
-Useful Make targets are `make db-up`, `make db-down`, `make migrate-up`, `make migrate-down`, `make sqlc`, `make test`, and `make vet`. The `migrate-down` target drops the current schema migration; use it only with disposable development data.
+Useful Make targets are `make db-up`, `make rabbitmq-up`, `make infra-up`, `make db-down`, `make migrate-up`, `make migrate-down`, `make sqlc`, `make test`, and `make vet`. The `migrate-down` target drops the current schema migration; use it only with disposable development data.
 
 ## SQL generation and integration tests
 
@@ -27,6 +27,15 @@ go test -tags=integration ./internal/...
 ```
 
 The integration test is skipped unless `TEST_DATABASE_URL` is set. It inserts isolated rows and removes them through the application foreign key cascade.
+
+RabbitMQ integration tests use a dedicated broker URL and verify persistent confirmed publishing, unroutable-message detection, and redelivery after a negative acknowledgement:
+
+```powershell
+$env:TEST_RABBITMQ_URL = "amqp://notification:notification-dev-password@localhost:5672/"
+go test -tags=integration ./internal/messaging
+```
+
+The RabbitMQ integration test is skipped unless `TEST_RABBITMQ_URL` is set.
 
 ## Register an integrating application
 

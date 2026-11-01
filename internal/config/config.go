@@ -24,9 +24,19 @@ type DatabaseConfig struct {
 	MaxConnLifeTime int32 // minutes
 }
 
+type RabbitmqConfig struct {
+	Host      string
+	Port      int
+	User      string
+	Password  string
+	Prefetch  int
+	BatchSize int
+}
+
 type Config struct {
 	Service  ServiceConfig
 	Database DatabaseConfig
+	Rabbitmq RabbitmqConfig
 }
 
 func LoadConfig() (*Config, error) {
@@ -50,6 +60,20 @@ func LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	rabbitmqPort, err := getEnvInt("RABBITMQ_PORT", DefaultRabbitmqPort)
+	if err != nil {
+		return nil, err
+	}
+	rabbitmqPrefetch, err := getEnvInt("RABBITMQ_PREFETCH", DefaultRabbitmqPrefetch)
+	if err != nil {
+		return nil, err
+	}
+	outboxBatchSize, err := getEnvInt("OUTBOX_BATCH_SIZE", DefaultOutboxBatchSize)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
 		Service: ServiceConfig{
 			Name:        getEnv("SERVICE_NAME", DefaultServiceName),
@@ -67,6 +91,15 @@ func LoadConfig() (*Config, error) {
 			MinConns:        minConns,
 			MaxConnIdleTime: idleMinutes,
 			MaxConnLifeTime: lifetimeMinutes,
+		},
+
+		Rabbitmq: RabbitmqConfig{
+			Host:      getEnv("RABBITMQ_HOST", DefaultRabbitmqHost),
+			Port:      rabbitmqPort,
+			User:      getEnv("RABBITMQ_USER", DefaultRabbitmqUser),
+			Password:  getEnv("RABBITMQ_PASSWORD", DefaultRabbitmqPassword),
+			Prefetch:  rabbitmqPrefetch,
+			BatchSize: outboxBatchSize,
 		},
 	}
 	if err := cfg.Validate(); err != nil {
@@ -101,6 +134,15 @@ func (c *Config) Validate() error {
 	}
 	if db.MaxConnIdleTime < 1 || db.MaxConnLifeTime < 1 {
 		return fmt.Errorf("DB_MAX_CONN_IDLE_TIME and DB_MAX_CONN_LIFETIME must be positive minutes")
+	}
+	if c.Rabbitmq.Host == "" || c.Rabbitmq.User == "" || c.Rabbitmq.Password == "" {
+		return fmt.Errorf("RABBITMQ_HOST, RABBITMQ_USER, and RABBITMQ_PASSWORD must not be empty")
+	}
+	if c.Rabbitmq.Port < 1 || c.Rabbitmq.Port > 65535 {
+		return fmt.Errorf("RABBITMQ_PORT must be between 1 and 65535; got %d", c.Rabbitmq.Port)
+	}
+	if c.Rabbitmq.Prefetch < 1 || c.Rabbitmq.BatchSize < 1 {
+		return fmt.Errorf("RABBITMQ_PREFETCH and OUTBOX_BATCH_SIZE must be positive")
 	}
 	return nil
 }

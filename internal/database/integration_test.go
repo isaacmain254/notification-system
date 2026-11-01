@@ -71,6 +71,13 @@ func TestPostgresRepositories(t *testing.T) {
 	}); err == nil {
 		t.Fatal("duplicate event idempotency key unexpectedly succeeded")
 	}
+	eventID := fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", event.ID.Bytes[0:4], event.ID.Bytes[4:6], event.ID.Bytes[6:8], event.ID.Bytes[8:10], event.ID.Bytes[10:16])
+	if transitioned, err := repo.BeginEventProcessing(ctx, eventID); err != nil || !transitioned {
+		t.Fatalf("begin event processing = %t, error = %v; want first transition", transitioned, err)
+	}
+	if transitioned, err := repo.BeginEventProcessing(ctx, eventID); err != nil || transitioned {
+		t.Fatalf("duplicate begin event processing = %t, error = %v; want idempotent no-op", transitioned, err)
+	}
 
 	template, err := repo.CreateTemplate(ctx, sqlc.CreateTemplateParams{
 		ApplicationID: app.ID, EventType: "test.event", Channel: "email",

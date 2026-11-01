@@ -1,7 +1,13 @@
-.PHONY: db-up db-down run-api run-worker register-app migrate-up migrate-down sqlc test test-integration vet fmt
+.PHONY: db-up rabbitmq-up infra-up db-down run-api run-worker register-app migrate-up migrate-down sqlc test test-integration vet fmt
 
 db-up:
 	docker compose up -d postgres
+
+rabbitmq-up:
+	docker compose up -d rabbitmq
+
+infra-up:
+	docker compose up -d postgres rabbitmq
 
 db-down:
 	docker compose down

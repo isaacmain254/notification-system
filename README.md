@@ -23,7 +23,25 @@ Run the PostgreSQL integration test against a dedicated database after applying 
 
 ```powershell
 $env:TEST_DATABASE_URL = "postgres://postgres:password@localhost:5432/notification-system?sslmode=disable"
-go test -tags=integration ./internal/database/...
+go test -tags=integration ./internal/...
 ```
 
 The integration test is skipped unless `TEST_DATABASE_URL` is set. It inserts isolated rows and removes them through the application foreign key cascade.
+
+## Register an integrating application
+
+Create an application from a trusted operator shell. The generated API key is printed once; store it in the integrating application's secret manager because the service persists only its SHA-256 hash.
+
+```powershell
+go run ./cmd/register-app -name "orders-service"
+```
+
+Submit an event with the returned key and an idempotency key. Repeating the same request and key returns the original event ID; reusing that key for changed content returns `409`.
+
+```powershell
+curl.exe -X POST http://localhost:5000/api/v1/events `
+  -H "X-API-Key: <api-key>" `
+  -H "Idempotency-Key: order-123-created" `
+  -H "Content-Type: application/json" `
+  -d '{"event_type":"order.created","recipient":{"external_user_id":"user-123","email":"customer@example.com"},"data":{"order_id":"ORD-123","amount":2500,"currency":"KES"}}'
+```

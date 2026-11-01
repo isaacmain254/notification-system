@@ -1,0 +1,2 @@
+ALTER TABLE events ADD COLUMN request_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ALTER COLUMN request_hash DROP DEFAULT;

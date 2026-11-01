@@ -38,6 +38,7 @@ type Event struct {
 	Status         string
 	CreatedAt      pgtype.Timestamptz
 	ProcessedAt    pgtype.Timestamptz
+	RequestHash    string
 }
 
 type Notification struct {

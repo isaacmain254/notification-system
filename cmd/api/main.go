@@ -12,6 +12,7 @@ import (
 
 	"github.com/isaacmain254/notification-system/internal/config"
 	"github.com/isaacmain254/notification-system/internal/database"
+	"github.com/isaacmain254/notification-system/internal/events"
 	apphttp "github.com/isaacmain254/notification-system/internal/http"
 )
 
@@ -33,10 +34,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	repository := database.NewRepository(pool)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.Service.Port,
-		Handler:           apphttp.RouterHandler(),
+		Handler:           apphttp.NewRouter(repository, events.NewService(repository), logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -2,7 +2,8 @@
 INSERT INTO recipients (application_id, external_user_id, email, phone)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (application_id, external_user_id)
-DO UPDATE SET email = EXCLUDED.email, phone = EXCLUDED.phone, updated_at = now()
+DO UPDATE SET email = COALESCE(EXCLUDED.email, recipients.email),
+              phone = COALESCE(EXCLUDED.phone, recipients.phone), updated_at = now()
 RETURNING *;
 
 -- name: GetRecipientByExternalID :one

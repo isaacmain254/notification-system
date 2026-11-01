@@ -2,12 +2,17 @@ package database
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/isaacmain254/notification-system/internal/database/sqlc"
+	"github.com/isaacmain254/notification-system/internal/events"
 )
 
 // Repository exposes application-oriented persistence operations backed by sqlc.
@@ -32,6 +37,11 @@ func (r *Repository) GetActiveApplicationByAPIKeyHash(ctx context.Context, hash 
 	return r.queries.GetActiveApplicationByAPIKeyHash(ctx, hash)
 }
 
+func (r *Repository) LookupActiveApplicationID(ctx context.Context, hash string) (pgtype.UUID, error) {
+	app, err := r.GetActiveApplicationByAPIKeyHash(ctx, hash)
+	return app.ID, err
+}
+
 func (r *Repository) UpsertRecipient(ctx context.Context, arg sqlc.UpsertRecipientParams) (sqlc.Recipient, error) {
 	return r.queries.UpsertRecipient(ctx, arg)
 }
@@ -44,6 +54,85 @@ func (r *Repository) GetRecipient(ctx context.Context, applicationID pgtype.UUID
 
 func (r *Repository) CreateEvent(ctx context.Context, arg sqlc.CreateEventParams) (sqlc.Event, error) {
 	return r.queries.CreateEvent(ctx, arg)
+}
+
+func (r *Repository) PersistEvent(ctx context.Context, applicationID pgtype.UUID, command events.PersistCommand) (string, error) {
+	var eventID string
+	errReplay := errors.New("idempotent event replay")
+	err := r.WithTx(ctx, func(txRepo *Repository) error {
+		recipient, err := txRepo.UpsertRecipient(ctx, sqlc.UpsertRecipientParams{
+			ApplicationID:  applicationID,
+			ExternalUserID: command.Recipient.ExternalUserID,
+			Email:          nullableText(command.Recipient.Email),
+			Phone:          nullableText(command.Recipient.Phone),
+		})
+		if err != nil {
+			return fmt.Errorf("upsert event recipient: %w", err)
+		}
+
+		event, err := txRepo.queries.InsertEventIfAbsent(ctx, sqlc.InsertEventIfAbsentParams{
+			ApplicationID: applicationID, RecipientID: recipient.ID,
+			EventType: command.EventType, IdempotencyKey: command.IdempotencyKey,
+			Payload: command.DataJSON, RequestHash: command.RequestHash,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			existing, lookupErr := txRepo.queries.GetEventByIdempotencyKey(ctx, sqlc.GetEventByIdempotencyKeyParams{
+				ApplicationID: applicationID, IdempotencyKey: command.IdempotencyKey,
+			})
+			if lookupErr != nil {
+				return fmt.Errorf("load event for idempotency check: %w", lookupErr)
+			}
+			if existing.RequestHash != command.RequestHash {
+				return events.ErrIdempotencyConflict
+			}
+			eventID = uuidString(existing.ID)
+			return errReplay // Roll back recipient timestamp or any incidental changes on replay.
+		}
+		if err != nil {
+			return fmt.Errorf("insert event: %w", err)
+		}
+
+		message, err := json.Marshal(struct {
+			Version       int             `json:"version"`
+			EventID       string          `json:"event_id"`
+			ApplicationID string          `json:"application_id"`
+			EventType     string          `json:"event_type"`
+			RecipientID   string          `json:"recipient_id"`
+			OccurredAt    time.Time       `json:"occurred_at"`
+			Data          json.RawMessage `json:"data"`
+		}{
+			Version: 1, EventID: uuidString(event.ID), ApplicationID: uuidString(applicationID),
+			EventType: event.EventType, RecipientID: uuidString(recipient.ID),
+			OccurredAt: event.CreatedAt.Time, Data: command.DataJSON,
+		})
+		if err != nil {
+			return fmt.Errorf("encode event outbox message: %w", err)
+		}
+		if _, err := txRepo.EnqueueOutboxMessage(ctx, sqlc.EnqueueOutboxMessageParams{
+			MessageType: "event.received", AggregateID: event.ID,
+			RoutingKey: "event." + event.EventType, Payload: message,
+		}); err != nil {
+			return fmt.Errorf("enqueue event outbox message: %w", err)
+		}
+		eventID = uuidString(event.ID)
+		return nil
+	})
+	if errors.Is(err, errReplay) {
+		return eventID, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return eventID, nil
+}
+
+func nullableText(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func uuidString(value pgtype.UUID) string {
+	b := value.Bytes
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func (r *Repository) GetEvent(ctx context.Context, id pgtype.UUID) (sqlc.Event, error) {

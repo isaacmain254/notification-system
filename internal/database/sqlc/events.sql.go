@@ -12,9 +12,9 @@ import (
 )
 
 const createEvent = `-- name: CreateEvent :one
-INSERT INTO events (application_id, recipient_id, event_type, idempotency_key, payload)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, application_id, recipient_id, event_type, idempotency_key, payload, status, created_at, processed_at
+INSERT INTO events (application_id, recipient_id, event_type, idempotency_key, payload, request_hash)
+VALUES ($1, $2, $3, $4, $5, '')
+RETURNING id, application_id, recipient_id, event_type, idempotency_key, payload, status, created_at, processed_at, request_hash
 `
 
 type CreateEventParams struct {
@@ -44,12 +44,13 @@ func (q *Queries) CreateEvent(ctx context.Context, arg CreateEventParams) (Event
 		&i.Status,
 		&i.CreatedAt,
 		&i.ProcessedAt,
+		&i.RequestHash,
 	)
 	return i, err
 }
 
 const getEventByID = `-- name: GetEventByID :one
-SELECT id, application_id, recipient_id, event_type, idempotency_key, payload, status, created_at, processed_at FROM events WHERE id = $1
+SELECT id, application_id, recipient_id, event_type, idempotency_key, payload, status, created_at, processed_at, request_hash FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEventByID(ctx context.Context, id pgtype.UUID) (Event, error) {
@@ -65,6 +66,75 @@ func (q *Queries) GetEventByID(ctx context.Context, id pgtype.UUID) (Event, erro
 		&i.Status,
 		&i.CreatedAt,
 		&i.ProcessedAt,
+		&i.RequestHash,
+	)
+	return i, err
+}
+
+const getEventByIdempotencyKey = `-- name: GetEventByIdempotencyKey :one
+SELECT id, application_id, recipient_id, event_type, idempotency_key, payload, status, created_at, processed_at, request_hash FROM events WHERE application_id = $1 AND idempotency_key = $2
+`
+
+type GetEventByIdempotencyKeyParams struct {
+	ApplicationID  pgtype.UUID
+	IdempotencyKey string
+}
+
+func (q *Queries) GetEventByIdempotencyKey(ctx context.Context, arg GetEventByIdempotencyKeyParams) (Event, error) {
+	row := q.db.QueryRow(ctx, getEventByIdempotencyKey, arg.ApplicationID, arg.IdempotencyKey)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.ApplicationID,
+		&i.RecipientID,
+		&i.EventType,
+		&i.IdempotencyKey,
+		&i.Payload,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ProcessedAt,
+		&i.RequestHash,
+	)
+	return i, err
+}
+
+const insertEventIfAbsent = `-- name: InsertEventIfAbsent :one
+INSERT INTO events (application_id, recipient_id, event_type, idempotency_key, payload, request_hash)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (application_id, idempotency_key) DO NOTHING
+RETURNING id, application_id, recipient_id, event_type, idempotency_key, payload, status, created_at, processed_at, request_hash
+`
+
+type InsertEventIfAbsentParams struct {
+	ApplicationID  pgtype.UUID
+	RecipientID    pgtype.UUID
+	EventType      string
+	IdempotencyKey string
+	Payload        []byte
+	RequestHash    string
+}
+
+func (q *Queries) InsertEventIfAbsent(ctx context.Context, arg InsertEventIfAbsentParams) (Event, error) {
+	row := q.db.QueryRow(ctx, insertEventIfAbsent,
+		arg.ApplicationID,
+		arg.RecipientID,
+		arg.EventType,
+		arg.IdempotencyKey,
+		arg.Payload,
+		arg.RequestHash,
+	)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.ApplicationID,
+		&i.RecipientID,
+		&i.EventType,
+		&i.IdempotencyKey,
+		&i.Payload,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ProcessedAt,
+		&i.RequestHash,
 	)
 	return i, err
 }
